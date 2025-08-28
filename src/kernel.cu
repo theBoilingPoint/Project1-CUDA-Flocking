@@ -19,7 +19,8 @@
 
 // smaller cell width = the neighbourhood distance
 // larger cell width = 2 * the neighbourhood distance
-#define USE_LARGER_CELL_WIDTH true;
+#define USE_LARGER_CELL_WIDTH true
+#define USE_SHARED_MEMORY true
 
 /**
 * Check for CUDA errors; print and exit if there was a problem.
@@ -608,6 +609,119 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
   vel2[i] = v;
 }
 
+__global__ void updateVelCoherentShared(
+  int gridResolution,
+  glm::vec3 gridMin,
+  float invCellWidth,
+  float neighborDistance,
+  const int* __restrict__ cellStart,
+  const int* __restrict__ cellEnd,
+  const glm::vec3* __restrict__ posCo, // coherent
+  const glm::vec3* __restrict__ velCo, // coherent
+  glm::vec3* __restrict__ outVelCo // coherent
+) {
+  // We use float4 because it’s the most GPU-friendly way to store 3D vectors for CUDA kernels, especially with shared-memory tiling.
+  extern __shared__ float4 shmem[];   // 2*blockDim.x float4's
+  float4* shPos = shmem;
+  float4* shVel = shmem + blockDim.x;
+
+  const int cell = blockIdx.x;
+  const int start = cellStart[cell];
+  if (start == -1) return;
+  const int end   = cellEnd[cell];
+
+  // This block processes boids in [start..end]
+  // Loop in case the cell has more boids than blockDim.x
+  for (int selfIdx = start + threadIdx.x; selfIdx <= end; selfIdx += blockDim.x) {
+    // Per-thread accumulators (registers)
+    glm::vec3 selfPos = posCo[selfIdx];
+    glm::vec3 v1acc(0);
+    glm::vec3 v2acc(0);
+    glm::vec3 v3acc(0);
+    int n1 = 0, n3 = 0;
+
+    // Compute neighbor-cell index ranges from [pos±R]
+    const float R  = neighborDistance;
+    auto toCell = [&](float x, float gmin) {
+      return (int)floorf((x - gmin) * invCellWidth);
+    };
+
+    int ixMin = max(0, toCell(selfPos.x - R, gridMin.x));
+    int ixMax = min(gridResolution - 1, toCell(selfPos.x + R, gridMin.x));
+    int iyMin = max(0, toCell(selfPos.y - R, gridMin.y));
+    int iyMax = min(gridResolution - 1, toCell(selfPos.y + R, gridMin.y));
+    int izMin = max(0, toCell(selfPos.z - R, gridMin.z));
+    int izMax = min(gridResolution - 1, toCell(selfPos.z + R, gridMin.z));
+
+    const float r1sq = rule1Distance * rule1Distance;
+    const float r2sq = rule2Distance * rule2Distance;
+    const float r3sq = rule3Distance * rule3Distance;
+
+    // Loop all neighbor cells (inclusive ranges)
+    for (int z = izMin; z <= izMax; ++z) {
+      for (int y = iyMin; y <= iyMax; ++y) {
+        for (int x = ixMin; x <= ixMax; ++x) {
+          int nCell = gridIndex3Dto1D(x, y, z, gridResolution);
+          int ns = cellStart[nCell];
+          if (ns == -1) continue;
+          int ne = cellEnd[nCell];
+
+          // --- Tile the neighbor cell into shared memory ---
+          for (int tile = ns; tile <= ne; tile += blockDim.x) {
+            int j = tile + threadIdx.x;
+
+            // Cooperative load (coalesced)
+            if (j <= ne) {
+              shPos[threadIdx.x] = make_float4(posCo[j].x, posCo[j].y, posCo[j].z, 0);
+              shVel[threadIdx.x] = make_float4(velCo[j].x, velCo[j].y, velCo[j].z, 0);
+            }
+            __syncthreads();
+
+            int count = min(blockDim.x, ne - tile + 1);
+            // Consume the tile from shared memory
+            #pragma unroll
+            for (int t = 0; t < count; ++t) {
+              int idx = tile + t;
+              if (idx == selfIdx) continue;
+
+              float3 d;
+              d.x = shPos[t].x - selfPos.x;
+              d.y = shPos[t].y - selfPos.y;
+              d.z = shPos[t].z - selfPos.z;
+              float dist2 = d.x*d.x + d.y*d.y + d.z*d.z;
+
+              if (dist2 < r1sq) { v1acc.x += shPos[t].x; v1acc.y += shPos[t].y; v1acc.z += shPos[t].z; ++n1; }
+              if (dist2 < r2sq) { v2acc.x -= d.x; v2acc.y -= d.y; v2acc.z -= d.z; }
+              if (dist2 < r3sq) { v3acc.x += shVel[t].x; v3acc.y += shVel[t].y; v3acc.z += shVel[t].z; ++n3; }
+            }
+            __syncthreads();
+          }
+        }
+      }
+    }
+
+    if (n1 > 0) { v1acc /= (float)n1; v1acc -= selfPos; }
+    if (n3 > 0) { v3acc /= (float)n3; }
+
+    // Scales
+    v1acc *= rule1Scale;
+    v2acc *= rule2Scale;
+    v3acc *= rule3Scale;
+
+    glm::vec3 v = velCo[selfIdx];
+    v += v1acc + v2acc + v3acc;
+
+    // Clamp speed
+    float speed2 = glm::dot(v, v);
+    if (speed2 > maxSpeed * maxSpeed) {
+      float inv = maxSpeed * rsqrtf(speed2);
+      v *= inv;
+    }
+
+    outVelCo[selfIdx] = glm::vec3(v.x, v.y, v.z);
+  }
+}
+
 /**
 * Step the entire N-body simulation by `dt` seconds.
 */
@@ -685,8 +799,36 @@ void Boids::stepSimulationCoherentGrid(float dt) {
   kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
 
   kernGenerateCoherentPosVal << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_particleArrayIndices, dev_pos, dev_vel1, dev_pos_coherent, dev_vel1_coherent);
-  
-  kernUpdateVelNeighborSearchCoherent << <fullBlocksPerGrid, blockSize >> >(numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, neighborDistance, dev_gridCellStartIndices, dev_gridCellEndIndices, dev_pos_coherent, dev_vel1_coherent, dev_vel2_coherent);
+
+#if USE_SHARED_MEMORY
+  dim3 grid(gridCellCount);
+  int  block = 32;
+  size_t shmem = 2 * block * sizeof(float4);
+  updateVelCoherentShared <<<grid, block, shmem>>> (
+      gridSideCount,
+      gridMinimum,
+      gridInverseCellWidth,
+      neighborDistance,
+      dev_gridCellStartIndices,
+      dev_gridCellEndIndices,
+      dev_pos_coherent,
+      dev_vel1_coherent,
+      dev_vel2_coherent
+    );
+#else
+  kernUpdateVelNeighborSearchCoherent << <fullBlocksPerGrid, blockSize >> >(
+      numObjects,
+      gridSideCount,
+      gridMinimum,
+      gridInverseCellWidth,
+      neighborDistance,
+      dev_gridCellStartIndices,
+      dev_gridCellEndIndices,
+      dev_pos_coherent,
+      dev_vel1_coherent,
+      dev_vel2_coherent
+    );
+#endif
 
   kernUpdatePos << <fullBlocksPerGrid, blockSize >> >(numObjects, dt, dev_pos_coherent, dev_vel2_coherent);
 
