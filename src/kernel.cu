@@ -401,28 +401,22 @@ __global__ void kernResetIntBuffer(int N, int *intBuffer, int value) {
   }
 }
 
-__global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
-  int *gridCellStartIndices, int *gridCellEndIndices) {
+__global__ void kernIdentifyCellStartEnd(
+  int N, const int* sortedGridIdx,
+  int* cellStart, int* cellEnd)
+{
   // TODO-2.1
   // Identify the start point of each cell in the gridIndices array.
   // This is basically a parallel unrolling of a loop that goes
   // "this index doesn't match the one before it, must be a new cell!"
   // At this point, the particleGridIndices has already been sorted.
-  if (N <= 0) {
-    return;
-  }
-
-  for (int i = 0; i < N; i++) {
-    int gridIndex = particleGridIndices[i];
-    if (i == 0 || gridIndex != particleGridIndices[i - 1]) {
-      gridCellStartIndices[gridIndex] = i;
-    }
-
-    if (i == N - 1 || gridIndex != particleGridIndices[i + 1]) {
-      gridCellEndIndices[gridIndex] = i;
-    }
-  }
-    
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  int cur  = sortedGridIdx[i];
+  int prev = (i > 0)     ? sortedGridIdx[i - 1] : -1;
+  int next = (i < N - 1) ? sortedGridIdx[i + 1] : -1;
+  if (i == 0     || cur != prev) cellStart[cur] = i;
+  if (i == N - 1 || cur != next) cellEnd[cur]   = i;
 }
 
 __global__ void kernUpdateVelNeighborSearchScattered(
