@@ -746,15 +746,14 @@ void Boids::stepSimulationScatteredGrid(float dt) {
   // - Perform velocity updates using neighbor search
   // - Update positions
   // - Ping-pong buffers as needed
-
   dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+  dim3 fullBlocksPerCell((gridCellCount + blockSize - 1) / blockSize);
 
   kernComputeIndices << <fullBlocksPerGrid, blockSize >> >(numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
 
   thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
 
-  kernResetIntBuffer << <fullBlocksPerGrid, blockSize >> >(gridCellCount, dev_gridCellStartIndices, -1);
-  kernResetIntBuffer << <fullBlocksPerGrid, blockSize >> >(gridCellCount, dev_gridCellEndIndices, -1);
+  kernResetIntBuffer << <fullBlocksPerCell, blockSize >> >(gridCellCount, dev_gridCellStartIndices, -1);
 
   kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
 
@@ -782,13 +781,13 @@ void Boids::stepSimulationCoherentGrid(float dt) {
   // - Update positions
   // - Ping-pong buffers as needed. THIS MAY BE DIFFERENT FROM BEFORE.
   dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+  dim3 fullBlocksPerCell((gridCellCount + blockSize - 1) / blockSize);
 
   kernComputeIndices << <fullBlocksPerGrid, blockSize >> >(numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
   
   thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
 
-  kernResetIntBuffer << <fullBlocksPerGrid, blockSize >> >(gridCellCount, dev_gridCellStartIndices, -1);
-  kernResetIntBuffer << <fullBlocksPerGrid, blockSize >> >(gridCellCount, dev_gridCellEndIndices, -1);
+  kernResetIntBuffer << <fullBlocksPerCell, blockSize >> >(gridCellCount, dev_gridCellStartIndices, -1);
 
   kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
 
