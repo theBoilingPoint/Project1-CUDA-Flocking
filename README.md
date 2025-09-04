@@ -1,38 +1,48 @@
-**University of Pennsylvania, CIS 5650: GPU Programming and Architecture,
-Project 1 - Flocking**
+# Project 1 - Flocking
+**University of Pennsylvania, CIS 5650: GPU Programming and Architecture**
+
+| ![](images/uniform-coherent_100000.png)                   |
+|-----------------------------------------------------------|
+| *Uniform-Coherent Grid Implementation with 100,000 Boids* |
 
 * Xinran Tao
   * [LinkedIn](https://www.linkedin.com/in/xinran-tao/), [Personal Website](https://www.xinrantao.com/), [GitHub](https://github.com/theBoilingPoint).
 * Tested on: 
-  - Ubuntu 22.04, i7-11700K @ 3.60GHz × 16, RAM 32GB, GeForce RTX 3080 Ti 12GB (Personal)
+  ```
+  - OS: Windows 11, 
+  - CPU: AMD Ryzen 7 7800X3D @ 4.20GHz x 8, 
+  - RAM: 64GB, 
+  - GPU: NVIDIA GeForce RTX 2080 Ti
+  ```
 
-### Visualisation
-![](images/coherent_grid_boid.png)
+## Visualisation
+Below are the GIFs of different implementations with **100,000** boids. The simulations are run using *NSight Graphics* with VSync off. 
 
-Below are the GIFs of different implementations with 5000 boids.
+### Naive Implementation
+![](images/naive_100000.gif)
 
-#### Naive Implementation
-![](images/naive.gif)
+### Scattered Grid Implementation
+![](images/scattered_100000.gif)
 
-#### Scattered Grid Implementation
-![](images/scattered.gif)
+### Coherent Grid Implementation
+![](images/coherent_100000.gif)
 
-#### Coherent Grid Implementation
-![](images/coherent.gif)
+### Coherent Grid with Shared Memory Implementation
+![](images/shared_100000.gif)
 
-### Performance Analysis
+## Performance Analysis
 All experiments are conducted with VSync disabled and visualisation turned off.
 
-#### FPS Change with Number of Boids
+### FPS Change with Number of Boids
 
-##### Method
+#### Method
 The block size is fixed at 128 and the cell width is fixed at 2 units for all experiments.
 
 Given that calculating the average FPS per `n` number of iterations (and printing them out in the terminal) decreases the FPS, the FPS listed below are the mean of the maximum and minimum FPS after the algorithm has converged (i.e. after running for 60s). 
 
-##### Experiment Results
+#### Experiment Results
 
-###### Raw Data
+##### Raw Data
 | Number of Boids    | FPS-Naive | FPS-Scattered Grid | FPS-Coherent Grid |
 | ------------------ | --------- | -------------------| ----------------- |
 | 5000               | 1009.0    | 1155.0             | 1200.0            |
@@ -42,10 +52,10 @@ Given that calculating the average FPS per `n` number of iterations (and printin
 | 80000              | 32.6      | 80.0               | 80.0              |
 | 160000             | 9.0       | 22.1               | 22.2              |
 
-###### Graph
+##### Graph
 ![](images/analysis/numBoids_FPS.png)
 
-##### Results Analysis
+#### Results Analysis
 For each implementation, the FPS decreases as the number of boids increases. All three implementations share the same FPS change pattern. The drop rate sof each FPS roughly follows the increase rate of the number of boids. More specifically, if the number of boids doubles, the FPS will be halved. 
 
 Overall, the coherent grid implementation has the highest FPS, followed by the scattered grid implementation, and the naive implementation has the lowest FPS. Although as the number of boids increases to above 40000, the advantage of the coherent grid implementation over the scattered grid implementation becomes less significant.
@@ -54,17 +64,17 @@ The general pattern of the FPS change with the number of boids is as expected. T
 
 Nonetheless, the FPS of all implementations decreases as the number of boids increases. In the naive implementation, each boid checks every other boid, leading to a quadratic increase in computations, while the grid-based implementations reduce this to a more manageable linear complexity by limiting checks to local grid cells. However, even with these optimizations, the workload still doubles as the number of boids doubles, leading to proportional FPS reductions. Additionally, increased memory traffic and GPU resource limits, such as bandwidth and cache usage, further contribute to the performance drop, as the system struggles to handle the larger number of boids efficiently. Thus, the FPS is inversely proportional to the number of boids, resulting in a halving of FPS as the boid count doubles.
 
-#### FPS Change with Block Size
+### FPS Change with Block Size
 
-##### Method
+#### Method
 The number of boids is fixed at 5000 and the cell width is fixed at 2 units for all experiments.
 
 Once again, the FPS listed below are the mean of the maximum and minimum FPS after the algorithm has converged (i.e. after running for 60s). 
 
-##### Experiment Results
+#### Experiment Results
 Note that initialising `blockSize` to 2048 and above will result in a CUDA error.
 
-###### Raw Data
+##### Raw Data
 | Block Size    | FPS-Naive | FPS-Scattered Grid | FPS-Coherent Grid |
 | --------------| --------- | -------------------| ----------------- |
 | 32            | 1033.9    | 1141.8             | 1178.0            |
@@ -74,10 +84,10 @@ Note that initialising `blockSize` to 2048 and above will result in a CUDA error
 | 512           | 888.0     | 1123.4             | 1155.6            |
 | 1024          | 568.5     | 873.4              | 899.2             |
 
-###### Graph
+##### Graph
 ![](images/analysis/blockSize_FPS.png)
 
-##### Results Analysis
+#### Results Analysis
 Overall, the coherent grid implementation still has the highest FPS, followed by the scattered grid implementation, and the naive implementation has the lowest FPS. The reason for this is the same as the previous analysis.
 
 At smaller block sizes (32–64), the GPU can efficiently handle computations, as the workload is well distributed across threads, and there is relatively little overhead in managing thread blocks. The higher FPS values observed at small block sizes are due to:
@@ -93,5 +103,5 @@ FPS starts to decrease significantly for all implementations at larger block siz
 - **Increased memory pressure**: As block size grows, the amount of memory accessed per block increases, leading to higher memory traffic and contention for global memory bandwidth. This causes a significant drop in FPS as memory access becomes the limiting factor.
 - **Worse memory access patterns**: Larger blocks tend to access memory more randomly or in scattered patterns, which can degrade the memory coalescing benefits seen at smaller block sizes. This increases memory latency and reduces performance.
 
-#### FPS Change with Cell Width
+### FPS Change with Cell Width
 For all three implementations, increasing the cell width from 2 to 3 units decreases the FPS. This is expected because each boid will have to check more cells in the grid, leading to more memory accesses and computations. 
