@@ -603,7 +603,7 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
   vel2[i] = v;
 }
 
-__global__ void updateVelCoherentShared(
+__global__ void kernUpdateVelCoherentShared(
   int gridResolution,
   glm::vec3 gridMin,
   float invCellWidth,
@@ -626,6 +626,7 @@ __global__ void updateVelCoherentShared(
 
   // This block processes boids in [start..end]
   // Loop in case the cell has more boids than blockDim.x
+  // (increment by blockDim.x because boid with index < multiple of it will be processed by other threads)
   for (int selfIdx = start + threadIdx.x; selfIdx <= end; selfIdx += blockDim.x) {
     // Per-thread accumulators (registers)
     glm::vec3 selfPos = posCo[selfIdx];
@@ -634,8 +635,8 @@ __global__ void updateVelCoherentShared(
     glm::vec3 v3acc(0);
     int n1 = 0, n3 = 0;
 
-    // Compute neighbor-cell index ranges from [pos±R]
-    const float R  = neighborDistance;
+    // Compute neighbor-cell index ranges from [pos+-R]
+    const float R = neighborDistance;
     auto toCell = [&](float x, float gmin) {
       return (int)floorf((x - gmin) * invCellWidth);
     };
@@ -660,7 +661,8 @@ __global__ void updateVelCoherentShared(
           if (ns == -1) continue;
           int ne = cellEnd[nCell];
 
-          // --- Tile the neighbor cell into shared memory ---
+          // Tile the neighbor cell into shared memory
+          // Note that this is run for every neighbour cell. The loop makes sure that all neighboour boids are loaded.
           for (int tile = ns; tile <= ne; tile += blockDim.x) {
             int j = tile + threadIdx.x;
 
@@ -794,10 +796,11 @@ void Boids::stepSimulationCoherentGrid(float dt) {
   kernGenerateCoherentPosVal << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_particleArrayIndices, dev_pos, dev_vel1, dev_pos_coherent, dev_vel1_coherent);
 
 #if USE_SHARED_MEMORY
+  // grid dim defines the number of blocks and block dim defines the number of threads
   dim3 grid(gridCellCount);
-  int  block = 32;
+  int block = 32;
   size_t shmem = 2 * block * sizeof(float4);
-  updateVelCoherentShared <<<grid, block, shmem>>> (
+  kernUpdateVelCoherentShared <<<grid, block, shmem>>> (
       gridSideCount,
       gridMinimum,
       gridInverseCellWidth,

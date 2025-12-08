@@ -31,7 +31,10 @@ Below are the GIFs of different implementations with **100,000** boids. The simu
 ![](images/shared_100000.gif)
 
 ## Performance Analysis
-All experiments are conducted with VSync disabled and visualisation turned off.
+All experiments are conducted with 
+- Project release mode;
+- VSync disabled;
+- visualisation turned off.
 
 ### FPS Change with Number of Boids
 
